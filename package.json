@@ -2,8 +2,8 @@
   "name": "ethnix-line-tracker",
   "private": true,
   "scripts": {
-    "postinstall": "cd server && npm install && cd ../client && npm install",
-    "build": "cd client && npx vite build",
+    "postinstall": "npm install --prefix server && npm install --prefix client",
+    "build": "npm run build --prefix client",
     "start": "node server/index.js",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && node index.js",
