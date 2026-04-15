@@ -59,7 +59,7 @@ router.get('/', async (req, res) => {
 
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -70,7 +70,7 @@ router.get('/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Line not found' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -93,7 +93,7 @@ router.post('/', async (req, res) => {
 
     res.json({ id: result.lastID, message: 'Line created' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -129,7 +129,7 @@ router.patch('/:id', async (req, res) => {
 
     res.json({ message: 'Line updated' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -154,7 +154,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ message: 'Line updated' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -174,7 +174,7 @@ router.put('/:id/toggle-status', async (req, res) => {
 
     res.json({ message: `Line ${action}` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -194,7 +194,7 @@ router.put('/:id/verify', async (req, res) => {
 
     res.json({ message: verified ? 'Line verified' : 'Line unverified' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -227,7 +227,7 @@ router.put('/:id/assign-device', async (req, res) => {
 
     res.json({ message: 'Device assigned to line' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 

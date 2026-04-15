@@ -8,7 +8,7 @@ router.get('/available-lines', async (req, res) => {
   try {
     res.json(await query("SELECT id, phone_number, employee_name FROM lines WHERE status = 'active' ORDER BY phone_number"));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -38,7 +38,7 @@ router.get('/', async (req, res) => {
 
     res.json(await query(sql, params));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -49,7 +49,7 @@ router.get('/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Device not found' });
     res.json(rows[0]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -72,7 +72,7 @@ router.post('/', async (req, res) => {
 
     res.json({ id: result.lastID, message: 'Device created' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -108,7 +108,7 @@ router.patch('/:id', async (req, res) => {
 
     res.json({ message: 'Device updated' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -131,7 +131,7 @@ router.put('/:id', async (req, res) => {
 
     res.json({ message: 'Device updated' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -171,7 +171,7 @@ router.put('/:id/assign', async (req, res) => {
 
     res.json({ message: 'Device assigned to line' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -194,7 +194,7 @@ router.put('/:id/unassign', async (req, res) => {
 
     res.json({ message: 'Device unassigned' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 
@@ -214,7 +214,7 @@ router.put('/:id/verify', async (req, res) => {
 
     res.json({ message: verified ? 'Device verified' : 'Device unverified' });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
   }
 });
 

@@ -222,10 +222,15 @@ export async function initDB() {
   }
 }
 
+// Convert undefined to null — sql.js and pg both choke on undefined
+function sanitize(params) {
+  return params.map(p => p === undefined ? null : p);
+}
+
 export async function query(sql, params = []) {
   if (mode === 'pg') {
     try {
-      const result = await pool.query(sqlToPg(sql), params);
+      const result = await pool.query(sqlToPg(sql), sanitize(params));
       return result.rows;
     } catch (err) {
       console.error('[DB QUERY ERROR]', err.message, '\nSQL:', sqlToPg(sql).substring(0, 200));
@@ -233,7 +238,7 @@ export async function query(sql, params = []) {
     }
   } else {
     const stmt = sqliteDb.prepare(sql);
-    stmt.bind(params);
+    stmt.bind(sanitize(params));
     const results = [];
     while (stmt.step()) results.push(stmt.getAsObject());
     stmt.free();
@@ -250,16 +255,18 @@ export async function run(sql, params = []) {
       ? trimmed + ' RETURNING id'
       : trimmed;
     try {
-      const result = await pool.query(finalSql, params);
+      const result = await pool.query(finalSql, sanitize(params));
       return { lastID: isInsert ? result.rows[0]?.id : null };
     } catch (err) {
       console.error('[DB ERROR]', err.message, '\nSQL:', finalSql.substring(0, 200));
       throw err;
     }
   } else {
-    sqliteDb.run(sql, params);
+    sqliteDb.run(sql, sanitize(params));
+    const lastIdResult = sqliteDb.exec("SELECT last_insert_rowid() as id");
+    const lastID = lastIdResult.length ? lastIdResult[0].values[0][0] : null;
     saveSqlite();
-    return { lastID: sqliteDb.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] };
+    return { lastID };
   }
 }
 
