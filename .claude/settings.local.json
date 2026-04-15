@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"import XLSX from 'xlsx'; const wb = XLSX.readFile\\('Base de datos oficial telefonos - Ethnix Group sept25.xlsx'\\); console.log\\('Sheets:', wb.SheetNames\\);\")"
+    ]
+  }
+}

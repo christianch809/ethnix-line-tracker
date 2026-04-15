@@ -8,9 +8,14 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "cd server && node index.js",
     "dev:client": "cd client && npx vite",
-    "import": "cd server && node import.js"
+    "import": "cd server && node import.js",
+    "seed": "cd server && node seed.js"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "pg": "^8.20.0",
+    "xlsx": "^0.18.5"
   }
 }
