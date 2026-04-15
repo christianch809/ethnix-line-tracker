@@ -9,6 +9,7 @@ import devicesRouter from './routes/devices.js';
 import invoicesRouter from './routes/invoices.js';
 import auditRouter from './routes/audit.js';
 import dashboardRouter from './routes/dashboard.js';
+import adminRouter from './routes/admin.js';
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.use('/api/devices', devicesRouter);
 app.use('/api/invoices', invoicesRouter);
 app.use('/api/audit', auditRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/admin', adminRouter);
 
 // In production, serve the built client
 const clientDist = path.join(__dirname, '..', 'client', 'dist');

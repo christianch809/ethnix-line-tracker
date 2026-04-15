@@ -224,8 +224,13 @@ export async function initDB() {
 
 export async function query(sql, params = []) {
   if (mode === 'pg') {
-    const result = await pool.query(sqlToPg(sql), params);
-    return result.rows;
+    try {
+      const result = await pool.query(sqlToPg(sql), params);
+      return result.rows;
+    } catch (err) {
+      console.error('[DB QUERY ERROR]', err.message, '\nSQL:', sqlToPg(sql).substring(0, 200));
+      throw err;
+    }
   } else {
     const stmt = sqliteDb.prepare(sql);
     stmt.bind(params);
@@ -239,17 +244,36 @@ export async function query(sql, params = []) {
 export async function run(sql, params = []) {
   if (mode === 'pg') {
     let pgSql = sqlToPg(sql);
-    const isInsert = pgSql.trim().toUpperCase().startsWith('INSERT');
-    if (isInsert && !/RETURNING/i.test(pgSql)) {
-      pgSql = pgSql.trimEnd().replace(/;?\s*$/, '') + ' RETURNING id';
+    const trimmed = pgSql.replace(/[\s;]+$/g, '');
+    const isInsert = trimmed.trimStart().toUpperCase().startsWith('INSERT');
+    const finalSql = isInsert && !/RETURNING/i.test(trimmed)
+      ? trimmed + ' RETURNING id'
+      : trimmed;
+    try {
+      const result = await pool.query(finalSql, params);
+      return { lastID: isInsert ? result.rows[0]?.id : null };
+    } catch (err) {
+      console.error('[DB ERROR]', err.message, '\nSQL:', finalSql.substring(0, 200));
+      throw err;
     }
-    const result = await pool.query(pgSql, params);
-    return { lastID: isInsert ? result.rows[0]?.id : null };
   } else {
     sqliteDb.run(sql, params);
     saveSqlite();
     return { lastID: sqliteDb.exec("SELECT last_insert_rowid()")[0]?.values[0]?.[0] };
   }
+}
+
+export async function queryRaw(sql, params = []) {
+  if (mode === 'pg') {
+    try {
+      const result = await pool.query(sql, params);
+      return result.rows;
+    } catch (err) {
+      console.error('[DB RAW ERROR]', err.message);
+      throw err;
+    }
+  }
+  return query(sql, params);
 }
 
 export function getMode() { return mode; }
