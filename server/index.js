@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { initDB } from './db.js';
@@ -20,6 +21,12 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
+// Health check — always works, no dependencies
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// API routes
 app.use('/api/lines', linesRouter);
 app.use('/api/devices', devicesRouter);
 app.use('/api/invoices', invoicesRouter);
@@ -27,18 +34,36 @@ app.use('/api/audit', auditRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/admin', adminRouter);
 
-// In production, serve the built client
+// Serve built client
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
-app.use(express.static(clientDist));
-app.get('*', (req, res) => {
-  if (!req.path.startsWith('/api')) {
-    res.sendFile(path.join(clientDist, 'index.html'));
-  }
-});
+const indexHtml = path.join(clientDist, 'index.html');
+
+if (fs.existsSync(indexHtml)) {
+  console.log('Serving client from:', clientDist);
+  app.use(express.static(clientDist));
+  app.get('*', (req, res) => {
+    res.sendFile(indexHtml);
+  });
+} else {
+  console.log('WARNING: client/dist not found at', clientDist);
+  app.get('/', (req, res) => {
+    res.send(`
+      <h1>Ethnix Line Tracker - Server Running</h1>
+      <p>Client not built yet. API is working:</p>
+      <ul>
+        <li><a href="/api/health">/api/health</a></li>
+        <li><a href="/api/admin/db-status">/api/admin/db-status</a></li>
+      </ul>
+      <p>To seed data: open browser console (F12) and run:</p>
+      <pre>fetch('/api/admin/seed',{method:'POST'}).then(r=>r.json()).then(console.log)</pre>
+    `);
+  });
+}
 
 initDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Database URL set: ${!!process.env.DATABASE_URL}`);
   });
 }).catch(err => {
   console.error('Failed to initialize database:', err);
