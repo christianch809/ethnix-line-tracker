@@ -16,6 +16,16 @@ export default function Invoices({ user }) {
 
   useEffect(() => { loadInvoices(); }, []);
 
+  const handleDelete = async (inv) => {
+    const msg = `Are you sure you want to DELETE invoice "${inv.filename}"?\n\nType DELETE to confirm:`;
+    const answer = prompt(msg);
+    if (answer !== 'DELETE') return;
+    try {
+      await api.deleteInvoice(inv.id, { deleted_by: user, confirm_delete: true });
+      loadInvoices();
+    } catch (err) { alert(err.message); }
+  };
+
   const handleUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -101,7 +111,10 @@ export default function Invoices({ user }) {
                   <td className="px-4 py-3">{inv.uploaded_by}</td>
                   <td className="px-4 py-3">{new Date(inv.upload_date).toLocaleDateString()}</td>
                   <td className="px-4 py-3">
-                    <Link to={`/invoices/${inv.id}`} className="text-blue-600 hover:underline text-xs">View Details</Link>
+                    <div className="flex gap-2">
+                      <Link to={`/invoices/${inv.id}`} className="text-blue-600 hover:underline text-xs">View Details</Link>
+                      <button onClick={() => handleDelete(inv)} className="text-red-500 hover:underline text-xs">Delete</button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -243,4 +243,36 @@ Return ONLY valid JSON:
   }
 });
 
+// DELETE invoice (requires confirm_delete=true in body)
+router.delete('/:id', async (req, res) => {
+  try {
+    const { deleted_by, confirm_delete } = req.body || {};
+    if (!confirm_delete) {
+      return res.status(400).json({ error: 'Must send confirm_delete: true to delete an invoice' });
+    }
+
+    const invoices = await query('SELECT * FROM invoices WHERE id = ?', [req.params.id]);
+    if (!invoices.length) return res.status(404).json({ error: 'Invoice not found' });
+
+    await run('DELETE FROM invoice_lines WHERE invoice_id = ?', [req.params.id]);
+    await run('DELETE FROM invoices WHERE id = ?', [req.params.id]);
+
+    await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
+      VALUES ('invoice', ?, 'deleted', ?, ?)`,
+      [req.params.id, deleted_by || 'unknown', JSON.stringify({ filename: invoices[0].filename, carrier: invoices[0].carrier })]);
+
+    // Delete file from disk
+    try {
+      if (invoices[0].file_path && fs.existsSync(invoices[0].file_path)) {
+        fs.unlinkSync(invoices[0].file_path);
+      }
+    } catch (e) {}
+
+    res.json({ message: 'Invoice deleted' });
+  } catch (err) {
+    console.error('[INVOICE ERROR]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

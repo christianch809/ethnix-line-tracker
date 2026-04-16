@@ -41,6 +41,7 @@ export const api = {
   uploadInvoice: (formData) => fetch(`${BASE}/invoices/upload`, { method: 'POST', body: formData }).then(r => r.json()),
   getInvoices: () => request('/invoices'),
   getInvoice: (id) => request(`/invoices/${id}`),
+  deleteInvoice: (id, data) => request(`/invoices/${id}`, { method: 'DELETE', body: JSON.stringify(data) }),
 
   // Audit
   getAuditLog: (params = '') => request(`/audit${params ? '?' + params : ''}`),
