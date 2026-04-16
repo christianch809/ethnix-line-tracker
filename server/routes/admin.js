@@ -123,4 +123,38 @@ router.post('/clear', async (req, res) => {
   }
 });
 
+// GET last invoice debug — shows raw extracted text and processing details
+router.get('/invoice-debug', async (req, res) => {
+  try {
+    const invoices = await query('SELECT * FROM invoices ORDER BY upload_date DESC LIMIT 1');
+    if (!invoices.length) return res.json({ error: 'No invoices found' });
+
+    const inv = invoices[0];
+    const lines = await query('SELECT * FROM invoice_lines WHERE invoice_id = ?', [inv.id]);
+    const rawText = inv.raw_extracted_text || '';
+
+    // Find phone-like patterns in raw text
+    const phoneRegex = /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/g;
+    const phonesInText = [...new Set((rawText.match(phoneRegex) || []).map(p => p.replace(/\D/g, '').slice(-10)))];
+
+    res.json({
+      invoice_id: inv.id,
+      filename: inv.filename,
+      carrier: inv.carrier,
+      total_amount: inv.total_amount,
+      raw_text_length: rawText.length,
+      raw_text_first_2000: rawText.substring(0, 2000),
+      raw_text_last_1000: rawText.substring(rawText.length - 1000),
+      phone_numbers_found_in_raw_text: phonesInText.length,
+      phone_numbers_sample: phonesInText.slice(0, 20),
+      invoice_lines_extracted: lines.length,
+      invoice_lines: lines.slice(0, 20),
+      api_key_set: !!process.env.ANTHROPIC_API_KEY,
+      api_key_prefix: process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_API_KEY.substring(0, 10) + '...' : 'NOT SET'
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 export default router;
