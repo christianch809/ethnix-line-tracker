@@ -3,6 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { PDFDocument } from 'pdf-lib';
 import { query, run } from '../db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -13,9 +14,34 @@ const storage = multer.diskStorage({
   destination: uploadDir,
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-const upload = multer({ storage, limits: { fileSize: 30 * 1024 * 1024 } });
+const upload = multer({ storage, limits: { fileSize: 50 * 1024 * 1024 } });
 
 const router = Router();
+
+// Helper: split PDF into batches of N pages, return as base64 PDFs
+async function splitPdfPages(pdfBuffer, pagesPerBatch = 3) {
+  const srcDoc = await PDFDocument.load(pdfBuffer);
+  const totalPages = srcDoc.getPageCount();
+  const batches = [];
+
+  for (let start = 0; start < totalPages; start += pagesPerBatch) {
+    const end = Math.min(start + pagesPerBatch, totalPages);
+    const newDoc = await PDFDocument.create();
+    const pages = await newDoc.copyPages(srcDoc, Array.from({ length: end - start }, (_, i) => start + i));
+    pages.forEach(p => newDoc.addPage(p));
+    const bytes = await newDoc.save();
+    batches.push({
+      base64: Buffer.from(bytes).toString('base64'),
+      pages: `${start + 1}-${end}`,
+      sizeKB: Math.round(bytes.length / 1024)
+    });
+  }
+
+  return { batches, totalPages };
+}
+
+// Helper: wait N ms
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 // GET all invoices
 router.get('/', async (req, res) => {
@@ -73,112 +99,96 @@ router.post('/upload', upload.single('invoice'), async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    console.log(`[INVOICE] Processing ${file.originalname} (${(file.size / 1024 / 1024).toFixed(1)}MB) for ${carrier}`);
-
     const pdfBuffer = fs.readFileSync(file.path);
-    const pdfBase64 = pdfBuffer.toString('base64');
+    console.log(`[INVOICE] Processing ${file.originalname} (${(pdfBuffer.length / 1024 / 1024).toFixed(1)}MB) for ${carrier}`);
 
-    // First try text extraction
-    let rawText = '';
-    try {
-      const pdfParse = (await import('pdf-parse')).default;
-      const pdfData = await pdfParse(pdfBuffer);
-      rawText = pdfData.text || '';
-    } catch (e) {
-      console.log('[INVOICE] pdf-parse failed:', e.message);
-    }
+    // Split PDF into small batches
+    const { batches, totalPages } = await splitPdfPages(pdfBuffer, 3);
+    console.log(`[INVOICE] ${totalPages} pages split into ${batches.length} batches`);
 
-    const hasUsableText = rawText.replace(/\s/g, '').length > 500;
-    console.log(`[INVOICE] Text extraction: ${rawText.length} chars, usable: ${hasUsableText}`);
-
-    // Use Claude with PDF file directly (works for scanned/image PDFs)
+    // Setup Claude
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    const prompt = `You are a billing analyst extracting data from a ${carrier} corporate wireless invoice.
-
-YOUR TASK: Find EVERY phone number/wireless line listed in this invoice and its charges.
-
-RULES:
-- Phone numbers appear as: (615) 555-1234, 615-555-1234, 615.555.1234, 6155551234
-- Extract ONLY the 10-digit US phone number as just digits: "6155551234"
-- For each phone, get the total monthly charges (recurring + fees + taxes for that line)
-- If a phone appears multiple times, sum all its charges
-- Include ALL phone numbers even if charges are $0
-- Also find the invoice total amount
-
-Return ONLY valid JSON:
-{
-  "total_amount": 1234.56,
-  "lines": [
-    {"phone_number": "6155551234", "description": "Plan or service name", "amount": 45.00}
-  ]
-}`;
+    const prompt = `Extract ALL phone numbers and charges from these ${carrier} invoice pages.
+Phone numbers are 10-digit US numbers (e.g., 615-555-1234 → "6155551234").
+Return ONLY JSON: {"total_amount": null, "lines": [{"phone_number": "6155551234", "description": "plan", "amount": 45.00}]}
+Include EVERY phone number you see, even if amount is 0. If you see a total amount for the whole invoice, include it.`;
 
     let allLines = [];
     let totalAmount = null;
 
-    // Strategy 1: Send PDF directly to Claude (handles scanned/image PDFs)
-    console.log('[INVOICE] Sending PDF to Claude with vision...');
-    try {
-      const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8192,
-        messages: [{
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
-            },
-            { type: 'text', text: prompt }
-          ]
-        }]
-      });
+    // Process each batch with delay between them
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
+      console.log(`[INVOICE] Batch ${i + 1}/${batches.length} (pages ${batch.pages}, ${batch.sizeKB}KB)`);
 
-      const content = message.content[0].text;
-      console.log('[INVOICE] Claude response length:', content.length);
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        totalAmount = parsed.total_amount || null;
-        if (parsed.lines && Array.isArray(parsed.lines)) {
-          allLines = parsed.lines;
-        }
+      // Wait between batches to respect rate limits
+      if (i > 0) {
+        console.log(`[INVOICE] Waiting 30s for rate limit...`);
+        await sleep(30000);
       }
-      console.log(`[INVOICE] Vision extracted ${allLines.length} lines`);
-    } catch (visionErr) {
-      console.error('[INVOICE] Vision failed:', visionErr.message);
 
-      // Strategy 2: Fall back to text if vision fails
-      if (hasUsableText) {
-        console.log('[INVOICE] Falling back to text extraction...');
-        try {
-          const textMsg = await anthropic.messages.create({
-            model: 'claude-sonnet-4-20250514',
-            max_tokens: 8192,
-            messages: [{
-              role: 'user',
-              content: prompt + '\n\nINVOICE TEXT:\n' + rawText.substring(0, 80000)
-            }]
-          });
-          const textContent = textMsg.content[0].text;
-          const textMatch = textContent.match(/\{[\s\S]*\}/);
-          if (textMatch) {
-            const parsed = JSON.parse(textMatch[0]);
-            totalAmount = parsed.total_amount || null;
-            if (parsed.lines && Array.isArray(parsed.lines)) {
-              allLines = parsed.lines;
-            }
+      try {
+        const message = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4096,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: batch.base64 }
+              },
+              { type: 'text', text: prompt + `\nThese are pages ${batch.pages} of ${totalPages}.` }
+            ]
+          }]
+        });
+
+        const content = message.content[0].text;
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          if (parsed.total_amount && !totalAmount) totalAmount = parsed.total_amount;
+          if (parsed.lines && Array.isArray(parsed.lines)) {
+            allLines = allLines.concat(parsed.lines);
           }
-          console.log(`[INVOICE] Text fallback extracted ${allLines.length} lines`);
-        } catch (textErr) {
-          console.error('[INVOICE] Text fallback also failed:', textErr.message);
+        }
+        console.log(`[INVOICE] Batch ${i + 1}: found ${allLines.length} lines so far`);
+      } catch (batchErr) {
+        console.error(`[INVOICE] Batch ${i + 1} error:`, batchErr.message);
+        // If rate limited, wait longer and retry once
+        if (batchErr.status === 429) {
+          console.log('[INVOICE] Rate limited, waiting 60s and retrying...');
+          await sleep(60000);
+          try {
+            const retry = await anthropic.messages.create({
+              model: 'claude-sonnet-4-20250514',
+              max_tokens: 4096,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: batch.base64 } },
+                  { type: 'text', text: prompt + `\nPages ${batch.pages} of ${totalPages}.` }
+                ]
+              }]
+            });
+            const retryContent = retry.content[0].text;
+            const retryMatch = retryContent.match(/\{[\s\S]*\}/);
+            if (retryMatch) {
+              const parsed = JSON.parse(retryMatch[0]);
+              if (parsed.total_amount && !totalAmount) totalAmount = parsed.total_amount;
+              if (parsed.lines) allLines = allLines.concat(parsed.lines);
+            }
+            console.log(`[INVOICE] Retry OK: ${allLines.length} lines`);
+          } catch (retryErr) {
+            console.error(`[INVOICE] Retry also failed:`, retryErr.message);
+          }
         }
       }
     }
 
-    // Deduplicate by phone number
+    // Deduplicate
     const phoneMap = {};
     for (const line of allLines) {
       const phone = (line.phone_number || '').replace(/\D/g, '').slice(-10);
@@ -189,50 +199,43 @@ Return ONLY valid JSON:
           phoneMap[phone].description += '; ' + line.description;
         }
       } else {
-        phoneMap[phone] = {
-          phone_number: phone,
-          description: line.description || '',
-          amount: Number(line.amount) || 0
-        };
+        phoneMap[phone] = { phone_number: phone, description: line.description || '', amount: Number(line.amount) || 0 };
       }
     }
     const dedupedLines = Object.values(phoneMap);
-    console.log(`[INVOICE] After dedup: ${dedupedLines.length} unique phone numbers`);
+    console.log(`[INVOICE] Final: ${dedupedLines.length} unique lines from ${totalPages} pages`);
 
     // Save invoice
     const result = await run(`
       INSERT INTO invoices (filename, file_path, carrier, billing_period, total_amount, uploaded_by, raw_extracted_text, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
     `, [file.originalname, file.path, carrier, billing_period, totalAmount, uploaded_by,
-      rawText.substring(0, 100000) || 'PDF processed via vision (image-based)']);
+      `Processed ${totalPages} pages in ${batches.length} batches. Found ${dedupedLines.length} lines.`]);
 
     const invoiceId = result.lastID;
 
-    // Match against system lines
+    // Match against system
     const activeLines = await query("SELECT id, phone_number FROM lines WHERE status = 'active'");
     const sysPhoneMap = {};
     for (const al of activeLines) {
-      const normalized = (al.phone_number || '').replace(/\D/g, '').slice(-10);
-      sysPhoneMap[normalized] = al.id;
+      sysPhoneMap[(al.phone_number || '').replace(/\D/g, '').slice(-10)] = al.id;
     }
 
-    let matchCount = 0;
-    let ghostCount = 0;
+    let matchCount = 0, ghostCount = 0;
     for (const line of dedupedLines) {
       const matchedId = sysPhoneMap[line.phone_number] || null;
-      const matchStatus = matchedId ? 'matched' : 'ghost';
       if (matchedId) matchCount++; else ghostCount++;
-
       await run(`INSERT INTO invoice_lines (invoice_id, phone_number, description, amount, matched_line_id, match_status)
         VALUES (?, ?, ?, ?, ?, ?)`,
-        [invoiceId, line.phone_number, line.description, line.amount, matchedId, matchStatus]);
+        [invoiceId, line.phone_number, line.description, line.amount, matchedId, matchedId ? 'matched' : 'ghost']);
     }
 
-    console.log(`[INVOICE] Done. ${dedupedLines.length} lines: ${matchCount} matched, ${ghostCount} ghost`);
+    console.log(`[INVOICE] Done: ${dedupedLines.length} lines (${matchCount} matched, ${ghostCount} ghost)`);
 
     res.json({
       id: invoiceId,
-      message: 'Invoice processed',
+      message: `Invoice processed: ${totalPages} pages, ${dedupedLines.length} lines found`,
+      total_pages: totalPages,
       lines_found: dedupedLines.length,
       matched: matchCount,
       ghost: ghostCount
@@ -243,12 +246,12 @@ Return ONLY valid JSON:
   }
 });
 
-// DELETE invoice (requires confirm_delete=true in body)
+// DELETE invoice
 router.delete('/:id', async (req, res) => {
   try {
     const { deleted_by, confirm_delete } = req.body || {};
     if (!confirm_delete) {
-      return res.status(400).json({ error: 'Must send confirm_delete: true to delete an invoice' });
+      return res.status(400).json({ error: 'Must send confirm_delete: true' });
     }
 
     const invoices = await query('SELECT * FROM invoices WHERE id = ?', [req.params.id]);
@@ -259,13 +262,10 @@ router.delete('/:id', async (req, res) => {
 
     await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
       VALUES ('invoice', ?, 'deleted', ?, ?)`,
-      [req.params.id, deleted_by || 'unknown', JSON.stringify({ filename: invoices[0].filename, carrier: invoices[0].carrier })]);
+      [req.params.id, deleted_by || 'unknown', JSON.stringify({ filename: invoices[0].filename })]);
 
-    // Delete file from disk
     try {
-      if (invoices[0].file_path && fs.existsSync(invoices[0].file_path)) {
-        fs.unlinkSync(invoices[0].file_path);
-      }
+      if (invoices[0].file_path && fs.existsSync(invoices[0].file_path)) fs.unlinkSync(invoices[0].file_path);
     } catch (e) {}
 
     res.json({ message: 'Invoice deleted' });
