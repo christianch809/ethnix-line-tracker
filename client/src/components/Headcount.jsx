@@ -16,9 +16,35 @@ export default function Headcount() {
   };
 
   useEffect(() => { load(); }, [filter]);
-
   const handleSearch = (e) => { e.preventDefault(); load(); };
 
+  // Flatten: one row per line per employee
+  const rows = [];
+  for (const emp of data) {
+    const maxRows = Math.max(emp.lines.length, 1);
+    for (let i = 0; i < maxRows; i++) {
+      const line = emp.lines[i] || null;
+      const device = emp.devices[i] || null;
+      rows.push({
+        employee_name: emp.employee_name,
+        department: emp.department,
+        ceco: emp.department,
+        location: emp.location,
+        isFirstRow: i === 0,
+        rowSpan: maxRows,
+        line,
+        device,
+        hasPhone: !!line,
+        hasDevice: !!device,
+        // Categorize device
+        iPhone: device?.equipment_type === 'iPhone' ? device : null,
+        iPad: device?.equipment_type === 'iPad' ? device : null,
+        otherDevice: device && device.equipment_type !== 'iPhone' && device.equipment_type !== 'iPad' ? device : null,
+      });
+    }
+  }
+
+  const totalEmployees = data.length;
   const withDevice = data.filter(e => e.devices.length > 0).length;
   const withoutDevice = data.filter(e => e.devices.length === 0).length;
 
@@ -27,7 +53,9 @@ export default function Headcount() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Headcount</h1>
-          <p className="text-sm text-gray-500">{data.length} employees — {withDevice} with device, {withoutDevice} without</p>
+          <p className="text-sm text-gray-500">
+            {totalEmployees} employees — {withDevice} with device, {withoutDevice} without
+          </p>
         </div>
       </div>
 
@@ -49,50 +77,102 @@ export default function Headcount() {
       <div className="bg-white rounded-xl shadow-sm overflow-x-auto border border-gray-200">
         {loading ? (
           <div className="text-center py-12 text-gray-500">Loading...</div>
-        ) : data.length === 0 ? (
+        ) : rows.length === 0 ? (
           <div className="text-center py-12 text-gray-400">No employees found</div>
         ) : (
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-gray-100 text-gray-600 text-left text-xs uppercase tracking-wider">
-                <th className="px-4 py-2.5 border-b border-r border-gray-200">Employee</th>
-                <th className="px-4 py-2.5 border-b border-r border-gray-200">Department</th>
-                <th className="px-4 py-2.5 border-b border-r border-gray-200">Location</th>
-                <th className="px-4 py-2.5 border-b border-r border-gray-200 text-center w-32">Line</th>
-                <th className="px-4 py-2.5 border-b border-r border-gray-200">Phone Number</th>
-                <th className="px-4 py-2.5 border-b border-r border-gray-200 text-center w-32">Device</th>
-                <th className="px-4 py-2.5 border-b border-gray-200">Device Info</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">Employee</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">Department</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">CECO</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">Location</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200 text-center">Line</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">Phone Number</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200">Carrier</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200 text-center">iPhone</th>
+                <th className="px-3 py-2.5 border-b border-r border-gray-200 text-center">iPad</th>
+                <th className="px-3 py-2.5 border-b border-gray-200 text-center">Other Device</th>
               </tr>
             </thead>
             <tbody>
-              {data.map((emp, i) => {
-                const hasLine = emp.lines.length > 0;
-                const hasDevice = emp.devices.length > 0;
+              {rows.map((row, i) => {
+                const borderClass = row.isFirstRow && i > 0 ? 'border-t-2 border-gray-300' : 'border-b border-gray-100';
+                const bgClass = !row.hasDevice && row.isFirstRow ? 'bg-orange-50/30' : '';
 
                 return (
-                  <tr key={i} className={`border-b border-gray-100 hover:bg-gray-50/50 ${!hasDevice ? 'bg-orange-50/30' : ''}`}>
-                    <td className="px-4 py-2.5 border-r border-gray-200 font-medium">{emp.employee_name}</td>
-                    <td className="px-4 py-2.5 border-r border-gray-200">{emp.department || <span className="text-gray-300">—</span>}</td>
-                    <td className="px-4 py-2.5 border-r border-gray-200">{emp.location || <span className="text-gray-300">—</span>}</td>
-                    <td className="px-4 py-2.5 border-r border-gray-200 text-center">
-                      {hasLine ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">✅ Yes</span>
+                  <tr key={i} className={`${borderClass} ${bgClass} hover:bg-gray-50/50`}>
+                    {/* Employee info — only on first row, spans multiple */}
+                    {row.isFirstRow ? (
+                      <>
+                        <td className="px-3 py-2 border-r border-gray-200 font-semibold" rowSpan={row.rowSpan}>
+                          {row.employee_name}
+                        </td>
+                        <td className="px-3 py-2 border-r border-gray-200" rowSpan={row.rowSpan}>
+                          {row.department || <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2 border-r border-gray-200" rowSpan={row.rowSpan}>
+                          {row.ceco || <span className="text-gray-300">—</span>}
+                        </td>
+                        <td className="px-3 py-2 border-r border-gray-200" rowSpan={row.rowSpan}>
+                          {row.location || <span className="text-gray-300">—</span>}
+                        </td>
+                      </>
+                    ) : null}
+
+                    {/* Line */}
+                    <td className="px-3 py-2 border-r border-gray-200 text-center">
+                      {row.hasPhone ? (
+                        <span className="text-green-600 font-bold">✅</span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700">❌ No</span>
+                        <span className="text-gray-300">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 border-r border-gray-200 font-mono text-xs">
-                      {emp.lines.map(l => l.phone_number).join(', ') || <span className="text-gray-300">—</span>}
+                    <td className="px-3 py-2 border-r border-gray-200 font-mono text-xs">
+                      {row.line?.phone_number || <span className="text-gray-300">—</span>}
                     </td>
-                    <td className="px-4 py-2.5 border-r border-gray-200 text-center">
-                      {hasDevice ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">✅ Yes</span>
+                    <td className="px-3 py-2 border-r border-gray-200 text-xs">
+                      {row.line?.carrier || <span className="text-gray-300">—</span>}
+                    </td>
+
+                    {/* iPhone */}
+                    <td className="px-3 py-2 border-r border-gray-200 text-center">
+                      {row.iPhone ? (
+                        <div>
+                          <span className="text-green-600 font-bold">✅</span>
+                          <div className="text-[10px] text-gray-500 mt-0.5 leading-tight">{row.iPhone.model}</div>
+                        </div>
+                      ) : row.isFirstRow && !data.find(e => e.employee_name === row.employee_name)?.devices.some(d => d.equipment_type === 'iPhone') ? (
+                        <span className="text-gray-300 text-xs">N/A</span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-orange-100 text-orange-700">⚠️ No</span>
+                        <span className="text-gray-200">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-2.5 border-gray-200 text-xs">
-                      {emp.devices.map(d => `${d.equipment_type} ${d.model}`).join(', ') || <span className="text-gray-300">No device assigned</span>}
+
+                    {/* iPad */}
+                    <td className="px-3 py-2 border-r border-gray-200 text-center">
+                      {row.iPad ? (
+                        <div>
+                          <span className="text-green-600 font-bold">✅</span>
+                          <div className="text-[10px] text-gray-500 mt-0.5 leading-tight">{row.iPad.model}</div>
+                        </div>
+                      ) : row.isFirstRow && !data.find(e => e.employee_name === row.employee_name)?.devices.some(d => d.equipment_type === 'iPad') ? (
+                        <span className="text-gray-300 text-xs">N/A</span>
+                      ) : (
+                        <span className="text-gray-200">—</span>
+                      )}
+                    </td>
+
+                    {/* Other Device (Galaxy, Hotspot, etc) */}
+                    <td className="px-3 py-2 border-gray-200 text-center">
+                      {row.otherDevice ? (
+                        <div>
+                          <span className="text-green-600 font-bold">✅</span>
+                          <div className="text-[10px] text-gray-500 mt-0.5 leading-tight">{row.otherDevice.equipment_type} {row.otherDevice.model}</div>
+                        </div>
+                      ) : (
+                        <span className="text-gray-200">—</span>
+                      )}
                     </td>
                   </tr>
                 );
@@ -101,6 +181,7 @@ export default function Headcount() {
           </table>
         )}
       </div>
+      <p className="text-xs text-gray-400 mt-2">{totalEmployees} employees, {rows.length} rows</p>
     </div>
   );
 }
