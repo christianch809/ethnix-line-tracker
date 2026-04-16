@@ -13,7 +13,7 @@ const storage = multer.diskStorage({
   destination: uploadDir,
   filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
 });
-const upload = multer({ storage });
+const upload = multer({ storage, limits: { fileSize: 30 * 1024 * 1024 } });
 
 const router = Router();
 
@@ -73,85 +73,112 @@ router.post('/upload', upload.single('invoice'), async (req, res) => {
     const file = req.file;
     if (!file) return res.status(400).json({ error: 'No file uploaded' });
 
-    console.log(`[INVOICE] Processing ${file.originalname} for ${carrier}`);
+    console.log(`[INVOICE] Processing ${file.originalname} (${(file.size / 1024 / 1024).toFixed(1)}MB) for ${carrier}`);
 
-    // Extract text from PDF
-    const pdfParse = (await import('pdf-parse')).default;
     const pdfBuffer = fs.readFileSync(file.path);
-    const pdfData = await pdfParse(pdfBuffer);
-    const rawText = pdfData.text;
+    const pdfBase64 = pdfBuffer.toString('base64');
 
-    console.log(`[INVOICE] Extracted ${rawText.length} chars from PDF`);
+    // First try text extraction
+    let rawText = '';
+    try {
+      const pdfParse = (await import('pdf-parse')).default;
+      const pdfData = await pdfParse(pdfBuffer);
+      rawText = pdfData.text || '';
+    } catch (e) {
+      console.log('[INVOICE] pdf-parse failed:', e.message);
+    }
 
-    // Use Claude to extract line items — send in chunks if needed
+    const hasUsableText = rawText.replace(/\s/g, '').length > 500;
+    console.log(`[INVOICE] Text extraction: ${rawText.length} chars, usable: ${hasUsableText}`);
+
+    // Use Claude with PDF file directly (works for scanned/image PDFs)
     const Anthropic = (await import('@anthropic-ai/sdk')).default;
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-    // For large invoices, split into chunks and merge results
-    const MAX_CHUNK = 80000;
-    const textChunks = [];
-    for (let i = 0; i < rawText.length; i += MAX_CHUNK) {
-      textChunks.push(rawText.substring(i, i + MAX_CHUNK));
-    }
+    const prompt = `You are a billing analyst extracting data from a ${carrier} corporate wireless invoice.
 
-    console.log(`[INVOICE] Sending ${textChunks.length} chunk(s) to Claude`);
+YOUR TASK: Find EVERY phone number/wireless line listed in this invoice and its charges.
+
+RULES:
+- Phone numbers appear as: (615) 555-1234, 615-555-1234, 615.555.1234, 6155551234
+- Extract ONLY the 10-digit US phone number as just digits: "6155551234"
+- For each phone, get the total monthly charges (recurring + fees + taxes for that line)
+- If a phone appears multiple times, sum all its charges
+- Include ALL phone numbers even if charges are $0
+- Also find the invoice total amount
+
+Return ONLY valid JSON:
+{
+  "total_amount": 1234.56,
+  "lines": [
+    {"phone_number": "6155551234", "description": "Plan or service name", "amount": 45.00}
+  ]
+}`;
 
     let allLines = [];
     let totalAmount = null;
 
-    for (let ci = 0; ci < textChunks.length; ci++) {
-      const chunk = textChunks[ci];
-      const isFirst = ci === 0;
+    // Strategy 1: Send PDF directly to Claude (handles scanned/image PDFs)
+    console.log('[INVOICE] Sending PDF to Claude with vision...');
+    try {
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8192,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+            },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      });
 
-      const prompt = `You are a billing analyst extracting data from a ${carrier} corporate wireless invoice.
-
-YOUR TASK: Find EVERY phone number/wireless line listed in this invoice and its charges.
-
-IMPORTANT RULES:
-- Phone numbers can appear in formats like: (615) 555-1234, 615-555-1234, 615.555.1234, 6155551234, 615 555 1234
-- Extract the 10-digit phone number as just digits: "6155551234"
-- Look for recurring charges, monthly charges, line access fees, equipment charges, data charges
-- Each phone number may appear multiple times — give me the TOTAL charges per phone number
-- If you see a line with no clear amount, set amount to 0
-- DO NOT skip any phone numbers. Include ALL of them even if charges are $0
-${isFirst ? '- Also extract the total_amount for the entire invoice if visible' : '- This is a continuation chunk, focus on finding additional phone numbers'}
-
-Return ONLY valid JSON, no other text:
-{
-  ${isFirst ? '"total_amount": 1234.56,' : ''}
-  "lines": [
-    {"phone_number": "6155551234", "description": "Line description or plan", "amount": 45.00}
-  ]
-}
-
-${textChunks.length > 1 ? `This is part ${ci + 1} of ${textChunks.length} of the invoice.` : ''}
-
-INVOICE TEXT:
-${chunk}`;
-
-      try {
-        const message = await anthropic.messages.create({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 8192,
-          messages: [{ role: 'user', content: prompt }]
-        });
-
-        const content = message.content[0].text;
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          if (isFirst && parsed.total_amount) totalAmount = parsed.total_amount;
-          if (parsed.lines && Array.isArray(parsed.lines)) {
-            allLines = allLines.concat(parsed.lines);
-          }
+      const content = message.content[0].text;
+      console.log('[INVOICE] Claude response length:', content.length);
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        totalAmount = parsed.total_amount || null;
+        if (parsed.lines && Array.isArray(parsed.lines)) {
+          allLines = parsed.lines;
         }
-        console.log(`[INVOICE] Chunk ${ci + 1}: found ${allLines.length} lines so far`);
-      } catch (aiErr) {
-        console.error(`[INVOICE] Claude error on chunk ${ci + 1}:`, aiErr.message);
+      }
+      console.log(`[INVOICE] Vision extracted ${allLines.length} lines`);
+    } catch (visionErr) {
+      console.error('[INVOICE] Vision failed:', visionErr.message);
+
+      // Strategy 2: Fall back to text if vision fails
+      if (hasUsableText) {
+        console.log('[INVOICE] Falling back to text extraction...');
+        try {
+          const textMsg = await anthropic.messages.create({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 8192,
+            messages: [{
+              role: 'user',
+              content: prompt + '\n\nINVOICE TEXT:\n' + rawText.substring(0, 80000)
+            }]
+          });
+          const textContent = textMsg.content[0].text;
+          const textMatch = textContent.match(/\{[\s\S]*\}/);
+          if (textMatch) {
+            const parsed = JSON.parse(textMatch[0]);
+            totalAmount = parsed.total_amount || null;
+            if (parsed.lines && Array.isArray(parsed.lines)) {
+              allLines = parsed.lines;
+            }
+          }
+          console.log(`[INVOICE] Text fallback extracted ${allLines.length} lines`);
+        } catch (textErr) {
+          console.error('[INVOICE] Text fallback also failed:', textErr.message);
+        }
       }
     }
 
-    // Deduplicate by phone number — merge amounts
+    // Deduplicate by phone number
     const phoneMap = {};
     for (const line of allLines) {
       const phone = (line.phone_number || '').replace(/\D/g, '').slice(-10);
@@ -176,7 +203,8 @@ ${chunk}`;
     const result = await run(`
       INSERT INTO invoices (filename, file_path, carrier, billing_period, total_amount, uploaded_by, raw_extracted_text, status)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-    `, [file.originalname, file.path, carrier, billing_period, totalAmount, uploaded_by, rawText.substring(0, 100000)]);
+    `, [file.originalname, file.path, carrier, billing_period, totalAmount, uploaded_by,
+      rawText.substring(0, 100000) || 'PDF processed via vision (image-based)']);
 
     const invoiceId = result.lastID;
 
@@ -191,8 +219,7 @@ ${chunk}`;
     let matchCount = 0;
     let ghostCount = 0;
     for (const line of dedupedLines) {
-      const normalized = line.phone_number;
-      const matchedId = sysPhoneMap[normalized] || null;
+      const matchedId = sysPhoneMap[line.phone_number] || null;
       const matchStatus = matchedId ? 'matched' : 'ghost';
       if (matchedId) matchCount++; else ghostCount++;
 
