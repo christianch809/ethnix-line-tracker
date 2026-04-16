@@ -157,4 +157,108 @@ router.get('/invoice-debug', async (req, res) => {
   }
 });
 
+// POST reprocess last invoice — shows exactly what happens step by step
+router.post('/reprocess-invoice', async (req, res) => {
+  const log = [];
+  const addLog = (msg) => { console.log('[REPROCESS]', msg); log.push(msg); };
+
+  try {
+    const invoices = await query('SELECT * FROM invoices ORDER BY upload_date DESC LIMIT 1');
+    if (!invoices.length) return res.json({ error: 'No invoices found', log });
+
+    const inv = invoices[0];
+    addLog(`Invoice: ${inv.filename}, carrier: ${inv.carrier}`);
+
+    const filePath = inv.file_path;
+    addLog(`File path: ${filePath}`);
+
+    const fsModule = await import('fs');
+    if (!fsModule.existsSync(filePath)) {
+      addLog('ERROR: File not found on disk! It was lost during redeploy.');
+      return res.json({ error: 'PDF file not found on server', log });
+    }
+
+    const pdfBuffer = fsModule.readFileSync(filePath);
+    addLog(`PDF size: ${(pdfBuffer.length / 1024).toFixed(0)} KB`);
+
+    const pdfBase64 = pdfBuffer.toString('base64');
+    addLog(`Base64 size: ${(pdfBase64.length / 1024).toFixed(0)} KB`);
+
+    addLog('Checking API key...');
+    if (!process.env.ANTHROPIC_API_KEY) {
+      addLog('ERROR: ANTHROPIC_API_KEY not set!');
+      return res.json({ error: 'No API key', log });
+    }
+    addLog('API key OK: ' + process.env.ANTHROPIC_API_KEY.substring(0, 12) + '...');
+
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    addLog('Sending PDF to Claude with document/vision...');
+    try {
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8192,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+            },
+            {
+              type: 'text',
+              text: `Extract ALL phone numbers and their charges from this ${inv.carrier} invoice. Return JSON: {"total_amount": 123.45, "lines": [{"phone_number": "6155551234", "description": "plan", "amount": 45.00}]}`
+            }
+          ]
+        }]
+      });
+
+      const content = message.content[0].text;
+      addLog(`Claude response: ${content.substring(0, 500)}`);
+
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        addLog(`Parsed: total=${parsed.total_amount}, lines=${parsed.lines?.length || 0}`);
+
+        // Save to DB - delete old lines, insert new ones
+        await run('DELETE FROM invoice_lines WHERE invoice_id = ?', [inv.id]);
+        await run('UPDATE invoices SET total_amount = ? WHERE id = ?', [parsed.total_amount, inv.id]);
+
+        const activeLines = await query("SELECT id, phone_number FROM lines WHERE status = 'active'");
+        const sysPhoneMap = {};
+        for (const al of activeLines) {
+          sysPhoneMap[(al.phone_number || '').replace(/\D/g, '').slice(-10)] = al.id;
+        }
+
+        let matched = 0, ghost = 0;
+        for (const line of (parsed.lines || [])) {
+          const phone = (line.phone_number || '').replace(/\D/g, '').slice(-10);
+          if (!phone || phone.length < 10) continue;
+          const matchedId = sysPhoneMap[phone] || null;
+          if (matchedId) matched++; else ghost++;
+          await run(`INSERT INTO invoice_lines (invoice_id, phone_number, description, amount, matched_line_id, match_status)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+            [inv.id, phone, line.description || '', Number(line.amount) || 0, matchedId, matchedId ? 'matched' : 'ghost']);
+        }
+        addLog(`Saved: ${matched} matched, ${ghost} ghost`);
+        return res.json({ success: true, lines: (parsed.lines || []).length, matched, ghost, log });
+      } else {
+        addLog('ERROR: No JSON found in Claude response');
+        return res.json({ error: 'No JSON in response', log });
+      }
+    } catch (apiErr) {
+      addLog(`CLAUDE API ERROR: ${apiErr.message}`);
+      addLog(`Error type: ${apiErr.constructor.name}`);
+      if (apiErr.status) addLog(`HTTP status: ${apiErr.status}`);
+      if (apiErr.error) addLog(`Error body: ${JSON.stringify(apiErr.error).substring(0, 500)}`);
+      return res.json({ error: apiErr.message, log });
+    }
+  } catch (err) {
+    addLog(`GENERAL ERROR: ${err.message}`);
+    return res.status(500).json({ error: err.message, log });
+  }
+});
+
 export default router;
