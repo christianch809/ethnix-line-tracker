@@ -97,7 +97,7 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PATCH inline edit
+// PATCH inline edit — cascades employee_name and location to assigned device
 router.patch('/:id', async (req, res) => {
   try {
     const { updated_by, ...fields } = req.body;
@@ -122,6 +122,23 @@ router.patch('/:id', async (req, res) => {
     params.push(updated_by, req.params.id);
 
     await run(`UPDATE lines SET ${sets.join(', ')} WHERE id = ?`, params);
+
+    // CASCADE: sync employee_name and location to assigned device
+    if (fields.employee_name !== undefined || fields.location !== undefined) {
+      const deviceSets = [];
+      const deviceParams = [];
+      if (fields.employee_name !== undefined) {
+        deviceSets.push('employee_name = ?');
+        deviceParams.push(fields.employee_name || null);
+      }
+      if (fields.location !== undefined) {
+        deviceSets.push('location = ?');
+        deviceParams.push(fields.location || null);
+      }
+      deviceSets.push('updated_by = ?', "updated_at = datetime('now')");
+      deviceParams.push(updated_by, req.params.id);
+      await run(`UPDATE devices SET ${deviceSets.join(', ')} WHERE assigned_to_line_id = ?`, deviceParams);
+    }
 
     await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
       VALUES ('line', ?, 'updated', ?, ?)`,
@@ -148,6 +165,10 @@ router.put('/:id', async (req, res) => {
       plan_name, monthly_cost || null, activation_date, deactivation_date, notes,
       updated_by, req.params.id]);
 
+    // CASCADE: sync employee_name and location to assigned device
+    await run(`UPDATE devices SET employee_name=?, location=?, updated_by=?, updated_at=datetime('now') WHERE assigned_to_line_id=?`,
+      [employee_name, location, updated_by, req.params.id]);
+
     await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
       VALUES ('line', ?, 'updated', ?, ?)`,
       [req.params.id, updated_by, JSON.stringify(req.body)]);
@@ -166,6 +187,18 @@ router.put('/:id/toggle-status', async (req, res) => {
 
     await run(`UPDATE lines SET status=?, deactivation_date=?, updated_by=?, updated_at=datetime('now') WHERE id=?`,
       [status, deactivation_date, updated_by, req.params.id]);
+
+    // CASCADE: if deactivating, unassign device → goes back to storage
+    if (status === 'inactive') {
+      const devices = await query('SELECT id FROM devices WHERE assigned_to_line_id = ?', [req.params.id]);
+      for (const d of devices) {
+        await run(`UPDATE devices SET assigned_to_line_id=NULL, status='available', updated_by=?, updated_at=datetime('now') WHERE id=?`,
+          [updated_by, d.id]);
+        await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
+          VALUES ('device', ?, 'unassigned', ?, ?)`,
+          [d.id, updated_by, JSON.stringify({ reason: 'Line deactivated', line_id: req.params.id })]);
+      }
+    }
 
     const action = status === 'active' ? 'activated' : 'deactivated';
     await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)

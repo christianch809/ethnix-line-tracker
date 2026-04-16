@@ -102,6 +102,26 @@ router.patch('/:id', async (req, res) => {
 
     await run(`UPDATE devices SET ${sets.join(', ')} WHERE id = ?`, params);
 
+    // CASCADE: if employee_name or location changed on an assigned device, sync to its line
+    if (fields.employee_name !== undefined || fields.location !== undefined) {
+      const device = (await query('SELECT assigned_to_line_id FROM devices WHERE id = ?', [req.params.id]))[0];
+      if (device?.assigned_to_line_id) {
+        const lineSets = [];
+        const lineParams = [];
+        if (fields.employee_name !== undefined) {
+          lineSets.push('employee_name = ?');
+          lineParams.push(fields.employee_name || null);
+        }
+        if (fields.location !== undefined) {
+          lineSets.push('location = ?');
+          lineParams.push(fields.location || null);
+        }
+        lineSets.push('updated_by = ?', "updated_at = datetime('now')");
+        lineParams.push(updated_by, device.assigned_to_line_id);
+        await run(`UPDATE lines SET ${lineSets.join(', ')} WHERE id = ?`, lineParams);
+      }
+    }
+
     await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
       VALUES ('device', ?, 'updated', ?, ?)`,
       [req.params.id, updated_by, JSON.stringify(fields)]);
