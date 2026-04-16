@@ -8,6 +8,7 @@ import Devices from './components/Devices';
 import Invoices from './components/Invoices';
 import InvoiceDetail from './components/InvoiceDetail';
 import AuditLog from './components/AuditLog';
+import Headcount from './components/Headcount';
 
 export default function App() {
   const [user, setUser] = useState(localStorage.getItem('ethnix_user') || '');
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/lines" element={<Lines user={user} />} />
         <Route path="/devices" element={<Devices user={user} />} />
+        <Route path="/headcount" element={<Headcount />} />
         <Route path="/invoices" element={<Invoices user={user} />} />
         <Route path="/invoices/:id" element={<InvoiceDetail />} />
         <Route path="/audit" element={<AuditLog />} />

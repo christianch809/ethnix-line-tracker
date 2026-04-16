@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import { TextCell, SelectCell, NumberCell, StatusBadge, VerifiedCheck, InvoiceStatusBadge } from './EditableCell';
+import SearchableSelect from './SearchableSelect';
 
 const CARRIERS = ['AT&T', 'Verizon'];
 const LOCATIONS = ['Nashville', 'Memphis', 'Cincinnati', 'Dallas', 'Houston', 'Other'];
@@ -297,22 +298,19 @@ function DeviceAssignment({ currentDevice, deviceId, availableDevices, onAssign 
   const [open, setOpen] = useState(false);
 
   if (open) {
+    const options = availableDevices.map(d => ({
+      value: d.value,
+      label: d.label,
+      sub: d.imei ? `IMEI: ${d.imei}` : ''
+    }));
     return (
-      <select
-        autoFocus
-        value={deviceId || ''}
-        onChange={e => { onAssign(e.target.value || null); setOpen(false); }}
-        onBlur={() => setOpen(false)}
-        className="w-full bg-blue-50 border border-blue-300 rounded px-1 py-0.5 text-xs outline-none"
-      >
-        <option value="">No device (storage)</option>
-        {currentDevice && deviceId && (
-          <option value={deviceId}>{currentDevice} (current)</option>
-        )}
-        {availableDevices.map(d => (
-          <option key={d.value} value={d.value}>{d.label}</option>
-        ))}
-      </select>
+      <SearchableSelect
+        options={options}
+        value={deviceId}
+        placeholder="Search device by model, type..."
+        onSelect={(val) => { onAssign(val); setOpen(false); }}
+        onClose={() => setOpen(false)}
+      />
     );
   }
 

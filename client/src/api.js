@@ -45,6 +45,9 @@ export const api = {
   // Audit
   getAuditLog: (params = '') => request(`/audit${params ? '?' + params : ''}`),
 
+  // Headcount
+  getHeadcount: (params = '') => request(`/headcount${params ? '?' + params : ''}`),
+
   // Dashboard
   getDashboard: () => request('/dashboard'),
 

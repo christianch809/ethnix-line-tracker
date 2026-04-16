@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../api';
 import { TextCell, SelectCell, StatusBadge, VerifiedCheck } from './EditableCell';
+import SearchableSelect from './SearchableSelect';
 
 const CARRIERS = ['AT&T', 'Verizon'];
 const EQUIP_TYPES = ['iPhone', 'iPad', 'Galaxy', 'Hotspot', 'Other'];
@@ -324,22 +325,18 @@ function LineAssignment({ currentLine, lineId, allLines, onAssign }) {
   const [open, setOpen] = useState(false);
 
   if (open) {
+    const options = allLines.filter(l => String(l.value) !== String(lineId)).map(l => ({
+      value: l.value,
+      label: l.label,
+    }));
     return (
-      <select
-        autoFocus
-        value={lineId || ''}
-        onChange={e => { onAssign(e.target.value || null); setOpen(false); }}
-        onBlur={() => setOpen(false)}
-        className="w-full bg-blue-50 border border-blue-300 rounded px-1 py-0.5 text-xs outline-none"
-      >
-        <option value="">No line (storage)</option>
-        {lineId && currentLine && (
-          <option value={lineId}>{currentLine} (current)</option>
-        )}
-        {allLines.filter(l => String(l.value) !== String(lineId)).map(l => (
-          <option key={l.value} value={l.value}>{l.label}</option>
-        ))}
-      </select>
+      <SearchableSelect
+        options={options}
+        value={lineId}
+        placeholder="Search by phone or name..."
+        onSelect={(val) => { onAssign(val); setOpen(false); }}
+        onClose={() => setOpen(false)}
+      />
     );
   }
 

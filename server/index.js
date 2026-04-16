@@ -11,6 +11,7 @@ import invoicesRouter from './routes/invoices.js';
 import auditRouter from './routes/audit.js';
 import dashboardRouter from './routes/dashboard.js';
 import adminRouter from './routes/admin.js';
+import headcountRouter from './routes/headcount.js';
 
 dotenv.config();
 
@@ -33,6 +34,7 @@ app.use('/api/invoices', invoicesRouter);
 app.use('/api/audit', auditRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/headcount', headcountRouter);
 
 // Serve built client
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
@@ -60,7 +62,27 @@ if (fs.existsSync(indexHtml)) {
   });
 }
 
-initDB().then(() => {
+initDB().then(async () => {
+  // Auto-seed if database is empty
+  const { query } = await import('./db.js');
+  const count = Number((await query('SELECT COUNT(*) as count FROM lines'))[0].count);
+  if (count === 0) {
+    console.log('Database is empty, auto-seeding...');
+    try {
+      const fs = await import('fs');
+      const seedPath = path.join(__dirname, 'seed-data.json');
+      if (fs.existsSync(seedPath)) {
+        const { default: seedFn } = await import('./auto-seed.js');
+        await seedFn();
+        console.log('Auto-seed complete.');
+      } else {
+        console.log('No seed-data.json found, skipping auto-seed.');
+      }
+    } catch (err) {
+      console.error('Auto-seed failed:', err);
+    }
+  }
+
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`Database URL set: ${!!process.env.DATABASE_URL}`);
