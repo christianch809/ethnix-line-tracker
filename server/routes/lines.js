@@ -231,4 +231,27 @@ router.put('/:id/assign-device', async (req, res) => {
   }
 });
 
+// DELETE line
+router.delete('/:id', async (req, res) => {
+  try {
+    const { deleted_by } = req.body || {};
+    const rows = await query('SELECT * FROM lines WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Line not found' });
+
+    // Unassign any device linked to this line
+    await run(`UPDATE devices SET assigned_to_line_id=NULL, status='available', updated_by=?, updated_at=datetime('now') WHERE assigned_to_line_id=?`,
+      [deleted_by || 'system', req.params.id]);
+
+    await run('DELETE FROM lines WHERE id = ?', [req.params.id]);
+
+    await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
+      VALUES ('line', ?, 'deleted', ?, ?)`,
+      [req.params.id, deleted_by || 'unknown', JSON.stringify({ phone_number: rows[0].phone_number, employee_name: rows[0].employee_name })]);
+
+    res.json({ message: 'Line deleted' });
+  } catch (err) {
+    console.error('[LINES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
 export default router;

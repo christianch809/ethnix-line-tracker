@@ -22,6 +22,7 @@ export const api = {
   toggleLineStatus: (id, data) => request(`/lines/${id}/toggle-status`, { method: 'PUT', body: JSON.stringify(data) }),
   verifyLine: (id, data) => request(`/lines/${id}/verify`, { method: 'PUT', body: JSON.stringify(data) }),
   assignDeviceToLine: (lineId, data) => request(`/lines/${lineId}/assign-device`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteLine: (id, data) => request(`/lines/${id}`, { method: 'DELETE', body: JSON.stringify(data) }),
 
   // Devices
   getDevices: (params = '') => request(`/devices${params ? '?' + params : ''}`),
@@ -32,6 +33,7 @@ export const api = {
   assignDevice: (id, data) => request(`/devices/${id}/assign`, { method: 'PUT', body: JSON.stringify(data) }),
   unassignDevice: (id, data) => request(`/devices/${id}/unassign`, { method: 'PUT', body: JSON.stringify(data) }),
   verifyDevice: (id, data) => request(`/devices/${id}/verify`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteDevice: (id, data) => request(`/devices/${id}`, { method: 'DELETE', body: JSON.stringify(data) }),
   getAvailableDevices: () => request('/devices?status=available'),
   getAvailableLines: () => request('/devices/available-lines'),
 

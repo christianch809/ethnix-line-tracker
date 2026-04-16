@@ -66,6 +66,14 @@ export default function Lines({ user }) {
     } catch (err) { alert(err.message); }
   };
 
+  const handleDelete = async (line) => {
+    if (!confirm(`Are you sure you want to DELETE line ${line.phone_number}?\nThis cannot be undone.`)) return;
+    try {
+      await api.deleteLine(line.id, { deleted_by: user });
+      loadLines();
+    } catch (err) { alert(err.message); }
+  };
+
   const handleAddNew = async () => {
     if (!newLine.phone_number.trim()) return;
     try {
@@ -256,13 +264,22 @@ export default function Lines({ user }) {
                       <TextCell value={line.notes} onSave={v => saveField(line.id, 'notes', v)} placeholder="Notes" />
                     </td>
                     <td className="px-1 py-1 text-center">
-                      <button
-                        onClick={() => handleToggleStatus(line)}
-                        className={`text-xs font-bold px-1.5 py-0.5 rounded ${line.status === 'active' ? 'text-red-500 hover:bg-red-50' : 'text-green-500 hover:bg-green-50'}`}
-                        title={line.status === 'active' ? 'Deactivate' : 'Activate'}
-                      >
-                        {line.status === 'active' ? '✕' : '✓'}
-                      </button>
+                      <div className="flex gap-1 justify-center">
+                        <button
+                          onClick={() => handleToggleStatus(line)}
+                          className={`text-xs font-bold px-1.5 py-0.5 rounded ${line.status === 'active' ? 'text-red-500 hover:bg-red-50' : 'text-green-500 hover:bg-green-50'}`}
+                          title={line.status === 'active' ? 'Deactivate' : 'Activate'}
+                        >
+                          {line.status === 'active' ? '✕' : '✓'}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(line)}
+                          className="text-xs font-bold px-1.5 py-0.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                          title="Delete line"
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );

@@ -218,4 +218,23 @@ router.put('/:id/verify', async (req, res) => {
   }
 });
 
+// DELETE device
+router.delete('/:id', async (req, res) => {
+  try {
+    const { deleted_by } = req.body || {};
+    const rows = await query('SELECT * FROM devices WHERE id = ?', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Device not found' });
+
+    await run('DELETE FROM devices WHERE id = ?', [req.params.id]);
+
+    await run(`INSERT INTO audit_log (entity_type, entity_id, action, changed_by, changes_json)
+      VALUES ('device', ?, 'deleted', ?, ?)`,
+      [req.params.id, deleted_by || 'unknown', JSON.stringify({ equipment_type: rows[0].equipment_type, model: rows[0].model, imei: rows[0].imei })]);
+
+    res.json({ message: 'Device deleted' });
+  } catch (err) {
+    console.error('[DEVICES ERROR]', err); res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
 export default router;

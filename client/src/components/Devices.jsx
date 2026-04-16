@@ -57,6 +57,14 @@ export default function Devices({ user }) {
     } catch (err) { alert(err.message); }
   };
 
+  const handleDelete = async (device) => {
+    if (!confirm(`Are you sure you want to DELETE ${device.equipment_type} ${device.model}?\nThis cannot be undone.`)) return;
+    try {
+      await api.deleteDevice(device.id, { deleted_by: user });
+      loadDevices();
+    } catch (err) { alert(err.message); }
+  };
+
   const handleAssignToLine = async (deviceId, lineId) => {
     try {
       await api.assignDevice(deviceId, { line_id: lineId || null, updated_by: user });
@@ -281,15 +289,24 @@ export default function Devices({ user }) {
 
                   {/* Actions */}
                   <td className="px-2 py-1 text-center">
-                    {d.status === 'assigned' && (
+                    <div className="flex gap-1 justify-center">
+                      {d.status === 'assigned' && (
+                        <button
+                          onClick={() => handleMoveToStorage(d)}
+                          className="text-xs font-medium text-orange-600 hover:bg-orange-50 rounded px-2 py-0.5"
+                          title="Move to storage"
+                        >
+                          → Storage
+                        </button>
+                      )}
                       <button
-                        onClick={() => handleMoveToStorage(d)}
-                        className="text-xs font-medium text-orange-600 hover:bg-orange-50 rounded px-2 py-0.5"
-                        title="Move to storage"
+                        onClick={() => handleDelete(d)}
+                        className="text-xs font-bold px-1.5 py-0.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50"
+                        title="Delete device"
                       >
-                        → Storage
+                        🗑
                       </button>
-                    )}
+                    </div>
                   </td>
                 </tr>
               ))}
